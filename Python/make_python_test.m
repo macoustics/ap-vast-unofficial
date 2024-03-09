@@ -16,12 +16,40 @@ hopSize = blockSize / 2;
 
 disp("Creating object...")
 ap = apVast(blockSize, rirA, rirB, filterLength, modelingDelay, referenceIndexA, referenceIndexB, numberOfEigenVectors, mu, statisticsBufferLength);
+props = properties(ap);
+for i = 1:length(props)
+    propName = props{i};
+    propValue = ap.(propName);
+    eval(['before_' propName ' = propValue;']);
+end
 disp("Creating object OK")
 
-iA = randn(hopSize, 1);
-iB = randn(hopSize, 1);
+niter = 1;
+iAb = randn(niter, hopSize, 1);
+iBb = randn(niter, hopSize, 1);
+numberOfLoudspeakers = size(rirA, 2);
+oAb = zeros(niter, hopSize, numberOfLoudspeakers);
+oBb = zeros(niter, hopSize, numberOfLoudspeakers);
+wAb = zeros(niter, filterLength * numberOfLoudspeakers);
+wBb = zeros(niter, filterLength * numberOfLoudspeakers);
 disp("Running...")
-[oA, oB] = ap.processInputBuffer(iA, iB);
+for i = 1:niter
+    iA = iAb(i,:,:);
+    iB = iBb(i,:,:);
+    [oA, oB] = ap.processInputBuffer(iA(:), iB(:));
+    wAb(i,:) = ap.m_wA;
+    wBb(i,:) = ap.m_wB;
+    disp(wAb(i, 1:4, 1))
+    disp(wBb(i, 1:4, 1))
+    oAb(i,:,:) = oA;
+    oBb(i,:,:) = oB;
+end
+props = properties(ap);
+for i = 1:length(props)
+    propName = props{i};
+    propValue = ap.(propName);
+    eval(['after_' propName ' = propValue;']);
+end
 disp("Running OK")
 
 disp("Saving...")
