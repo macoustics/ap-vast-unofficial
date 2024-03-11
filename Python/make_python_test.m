@@ -24,7 +24,7 @@ for i = 1:length(props)
 end
 disp("Creating object OK")
 
-niter = 1;
+niter = 10;
 iAb = randn(niter, hopSize, 1);
 iBb = randn(niter, hopSize, 1);
 numberOfLoudspeakers = size(rirA, 2);

@@ -410,14 +410,8 @@ classdef apVast < handle
                 obj (1,1) apVast
             end
             % Joint diagonalization
-            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', true);
-            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', true);
-
-            % NOTE: alternative, check if working?
-            % [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB);
-            % [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA);
-            % lambdaA = diag(lambdaA)
-            % lambdaB = diag(lambdaB)
+            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', false);
+            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', false);
 
             % Store for debugging
             obj.m_UA = UA 
