@@ -63,6 +63,14 @@ classdef apVast < handle
         m_rA =  [];
         m_rB =  [];
 
+        % Intermediate results (used for debugging)
+        m_UA = [];
+        m_UB = [];
+        m_wA = [];
+        m_wB = [];
+        m_lambdaA = [];
+        m_lambdaB = [];
+
         % Perceptual weighting
         m_weightingSpectraA = [];
         m_weightingSpectraB = [];
@@ -402,20 +410,26 @@ classdef apVast < handle
                 obj (1,1) apVast
             end
             % Joint diagonalization
-            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', true);
-            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', true);
-            
+            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', false);
+            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', false);
+
+            % Store for debugging
+            obj.m_UA = UA 
+            obj.m_UB = UB 
+            obj.m_lambdaA = lambdaA
+            obj.m_lambdaB = lambdaB
+
             % Determine filters
-            wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
-            wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+            obj.m_wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+            obj.m_wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
             for i = 1:numberOfEigenvectors
-                wA = wA + (UA(:,i).'*obj.m_rA)/(lambdaA(i) + mu) * UA(:,i);
-                wB = wB + (UB(:,i).'*obj.m_rB)/(lambdaB(i) + mu) * UB(:,i);
+                obj.m_wA = obj.m_wA + (obj.m_UA(:,i).'*obj.m_rA)/(obj.m_lambdaA(i) + mu) * obj.m_UA(:,i);
+                obj.m_wB = obj.m_wB + (obj.m_UB(:,i).'*obj.m_rB)/(obj.m_lambdaB(i) + mu) * obj.m_UB(:,i);
             end
 
             % Determine filter spectra
-            obj.m_filterSpectraA = fft(reshape(wA, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
-            obj.m_filterSpectraB = fft(reshape(wB, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+            obj.m_filterSpectraA = fft(reshape(obj.m_wA, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+            obj.m_filterSpectraB = fft(reshape(obj.m_wB, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
         end
 
         function [obj] = updateInputBlocks(obj, inputA, inputB)
