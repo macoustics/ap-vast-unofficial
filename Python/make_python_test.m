@@ -25,8 +25,16 @@ end
 disp("Creating object OK")
 
 niter = 10;
-iAb = randn(niter, hopSize, 1);
-iBb = randn(niter, hopSize, 1);
+% iAb = randn(niter, hopSize, 1);
+% iBb = randn(niter, hopSize, 1);
+
+load("signals.mat");
+
+sA = signalA(1:niter*hopSize);
+sB = signalB(1:niter*hopSize);
+iAb = reshape(sA, niter, hopSize);
+iBb = reshape(sB, niter, hopSize);
+
 numberOfLoudspeakers = size(rirA, 2);
 oAb = zeros(niter, hopSize, numberOfLoudspeakers);
 oBb = zeros(niter, hopSize, numberOfLoudspeakers);
