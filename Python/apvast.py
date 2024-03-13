@@ -16,7 +16,7 @@ def approx(a, b, rtol=1e-5, atol=1e-15, etol=1e-25):
 # joint diagoanlization
 def jdiag(A, B):
     # throws on non-semidefinite B
-    Bc = np.linalg.cholesky(B)
+    Bc = np.linalg.cholesky(B) # + 1e-12 * np.eye(B.shape[0]))
     C0 = sp.linalg.solve_triangular(Bc, A, lower=True)
     C1 = sp.linalg.solve_triangular(np.conj(Bc), C0.T, lower=True).T
     [T, U] = sp.linalg.schur(C1)
@@ -68,8 +68,8 @@ class apvast:
             self.model = ld.Detectability(frame_size=self.block_size,
                                           sampling_rate=self.sampling_rate,
                                           taps=32,
-                                          dbspl=60.0, # Note: relax_threshold so ignored more or less
-                                          spl=1.0e-3, # Note: relax_threshold so ignored more or less
+                                          dbspl=60.0, # Note: relax_threshold so ignored
+                                          spl=1.0e-3, # Note: relax_threshold so ignored
                                           relax_threshold=True,
                                           )
 
@@ -166,23 +166,21 @@ class apvast:
             self.loudspeaker_target_response_B_to_B_buffer[:, m] = np.concatenate([self.loudspeaker_target_response_B_to_B_buffer[idx, m], tmp_input])
 
             for l in range(self.number_of_srcs):
-                if self.run_A:
-                    tmp_input, tmp_state = sp.signal.lfilter(self.rir_A[:, l, m], 1, input_A, zi=self.rir_A_to_A_state[:, l, m])
-                    self.rir_A_to_A_state[:, l, m] = tmp_state
-                    self.loudspeaker_response_A_to_A_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_A_to_A_buffer[idx, l, m], tmp_input])
+                tmp_input, tmp_state = sp.signal.lfilter(self.rir_A[:, l, m], 1, input_A, zi=self.rir_A_to_A_state[:, l, m])
+                self.rir_A_to_A_state[:, l, m] = tmp_state
+                self.loudspeaker_response_A_to_A_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_A_to_A_buffer[idx, l, m], tmp_input])
 
-                    tmp_input, tmp_state = sp.signal.lfilter(self.rir_B[:, l, m], 1, input_A, zi=self.rir_A_to_B_state[:, l, m])
-                    self.rir_A_to_B_state[:, l, m] = tmp_state
-                    self.loudspeaker_response_A_to_B_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_A_to_B_buffer[idx, l, m], tmp_input])
+                tmp_input, tmp_state = sp.signal.lfilter(self.rir_B[:, l, m], 1, input_A, zi=self.rir_A_to_B_state[:, l, m])
+                self.rir_A_to_B_state[:, l, m] = tmp_state
+                self.loudspeaker_response_A_to_B_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_A_to_B_buffer[idx, l, m], tmp_input])
 
-                if self.run_B:
-                    tmp_input, tmp_state = sp.signal.lfilter(self.rir_A[:, l, m], 1, input_B, zi=self.rir_B_to_A_state[:, l, m])
-                    self.rir_B_to_A_state[:, l, m] = tmp_state
-                    self.loudspeaker_response_B_to_A_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_B_to_A_buffer[idx, l, m], tmp_input])
+                tmp_input, tmp_state = sp.signal.lfilter(self.rir_A[:, l, m], 1, input_B, zi=self.rir_B_to_A_state[:, l, m])
+                self.rir_B_to_A_state[:, l, m] = tmp_state
+                self.loudspeaker_response_B_to_A_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_B_to_A_buffer[idx, l, m], tmp_input])
 
-                    tmp_input, tmp_state = sp.signal.lfilter(self.rir_B[:, l, m], 1, input_B, zi=self.rir_B_to_B_state[:, l, m])
-                    self.rir_B_to_B_state[:, l, m] = tmp_state
-                    self.loudspeaker_response_B_to_B_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_B_to_B_buffer[idx, l, m], tmp_input])
+                tmp_input, tmp_state = sp.signal.lfilter(self.rir_B[:, l, m], 1, input_B, zi=self.rir_B_to_B_state[:, l, m])
+                self.rir_B_to_B_state[:, l, m] = tmp_state
+                self.loudspeaker_response_B_to_B_buffer[:, l, m] = np.concatenate([self.loudspeaker_response_B_to_B_buffer[idx, l, m], tmp_input])
 
 
     def update_weighted_target_signals(self):
@@ -227,12 +225,10 @@ class apvast:
 
     def update_weighted_loudspeaker_response(self):
         # calculate spectra
-        if self.run_A:
-            A_to_A_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
-            A_to_B_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
-        if self.run_B:
-            B_to_A_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
-            B_to_B_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
+        A_to_A_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
+        A_to_B_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
+        B_to_A_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
+        B_to_B_spectra = np.zeros((self.block_size // 2 + 1, self.number_of_srcs, self.number_of_mics), dtype=complex)
 
         for m in range(self.number_of_mics):
             if self.run_A:
@@ -249,45 +245,41 @@ class apvast:
 
         # circular convolution with weighting filter
         for m in range(self.number_of_mics):
-            if self.run_A:
-                A_to_A_spectra[:, :, m] = np.multiply(A_to_A_spectra[:, :, m], np.tile(self.weighting_spectra_A[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
-                A_to_B_spectra[:, :, m] = np.multiply(A_to_B_spectra[:, :, m], np.tile(self.weighting_spectra_B[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
-            if self.run_B:
-                B_to_A_spectra[:, :, m] = np.multiply(B_to_A_spectra[:, :, m], np.tile(self.weighting_spectra_A[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
-                B_to_B_spectra[:, :, m] = np.multiply(B_to_B_spectra[:, :, m], np.tile(self.weighting_spectra_B[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
+            A_to_A_spectra[:, :, m] = np.multiply(A_to_A_spectra[:, :, m], np.tile(self.weighting_spectra_A[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
+            A_to_B_spectra[:, :, m] = np.multiply(A_to_B_spectra[:, :, m], np.tile(self.weighting_spectra_B[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
+            B_to_A_spectra[:, :, m] = np.multiply(B_to_A_spectra[:, :, m], np.tile(self.weighting_spectra_A[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
+            B_to_B_spectra[:, :, m] = np.multiply(B_to_B_spectra[:, :, m], np.tile(self.weighting_spectra_B[:, m].reshape(-1, 1), (1, self.number_of_srcs)))
 
         # WOLA reconstruction
         idx = np.array([i for i in range(self.hop_size, self.block_size)]) # NOTE: could be wrong?
         for m in range(self.number_of_mics):
-            if self.run_A:
-                # signal A to zone A
-                tmp_old = self.loudspeaker_weighted_response_A_to_A_overlap_buffer[:, :, m]
-                tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(A_to_A_spectra[:, :, m], self.block_size, 0))
-                assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
-                tmp_new = np.real(tmp_new)
-                self.loudspeaker_weighted_response_A_to_A_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
+            # signal A to zone A
+            tmp_old = self.loudspeaker_weighted_response_A_to_A_overlap_buffer[:, :, m]
+            tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(A_to_A_spectra[:, :, m], self.block_size, 0))
+            assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
+            tmp_new = np.real(tmp_new)
+            self.loudspeaker_weighted_response_A_to_A_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
 
-                # signal A to zone B
-                tmp_old = self.loudspeaker_weighted_response_A_to_B_overlap_buffer[:, :, m]
-                tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(A_to_B_spectra[:, :, m], self.block_size, 0))
-                assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
-                tmp_new = np.real(tmp_new)
-                self.loudspeaker_weighted_response_A_to_B_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
+            # signal A to zone B
+            tmp_old = self.loudspeaker_weighted_response_A_to_B_overlap_buffer[:, :, m]
+            tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(A_to_B_spectra[:, :, m], self.block_size, 0))
+            assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
+            tmp_new = np.real(tmp_new)
+            self.loudspeaker_weighted_response_A_to_B_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
 
-            if self.run_B:
-                # signal B to zone A
-                tmp_old = self.loudspeaker_weighted_response_B_to_A_overlap_buffer[:, :, m]
-                tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(B_to_A_spectra[:, :, m], self.block_size, 0))
-                assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
-                tmp_new = np.real(tmp_new)
-                self.loudspeaker_weighted_response_B_to_A_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
+            # signal B to zone A
+            tmp_old = self.loudspeaker_weighted_response_B_to_A_overlap_buffer[:, :, m]
+            tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(B_to_A_spectra[:, :, m], self.block_size, 0))
+            assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
+            tmp_new = np.real(tmp_new)
+            self.loudspeaker_weighted_response_B_to_A_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
 
-                # signal B to zone B
-                tmp_old = self.loudspeaker_weighted_response_B_to_B_overlap_buffer[:, :, m]
-                tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(B_to_B_spectra[:, :, m], self.block_size, 0))
-                assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
-                tmp_new = np.real(tmp_new)
-                self.loudspeaker_weighted_response_B_to_B_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
+            # signal B to zone B
+            tmp_old = self.loudspeaker_weighted_response_B_to_B_overlap_buffer[:, :, m]
+            tmp_new = np.multiply(np.tile(self.window, (1, self.number_of_srcs)), np.fft.irfft(B_to_B_spectra[:, :, m], self.block_size, 0))
+            assert np.linalg.norm(np.imag(tmp_new)) < 1e-8
+            tmp_new = np.real(tmp_new)
+            self.loudspeaker_weighted_response_B_to_B_overlap_buffer[:, :, m] = np.concatenate([tmp_old[idx, :], np.zeros((self.hop_size, self.number_of_srcs))]) + tmp_new
 
         # update weighted_target_response_buffers
         idx = np.array([i for i in range(self.hop_size, self.statistics_buffer_length)]) # NOTE: could be wrong?
@@ -296,22 +288,20 @@ class apvast:
             #     self.loudspeaker_weighted_response_A_to_A_buffer[idx, :, m], 
             #     self.loudspeaker_weighted_response_A_to_A_overlap_buffer[0:self.hop_size, :, m]])
 
-            if self.run_A:
-                self.loudspeaker_weighted_response_A_to_A_buffer[:(self.statistics_buffer_length - self.hop_size), :, m] = self.loudspeaker_weighted_response_A_to_A_buffer[idx, :, m]
-                self.loudspeaker_weighted_response_A_to_A_buffer[(self.statistics_buffer_length - self.hop_size):, :, m] = self.loudspeaker_weighted_response_A_to_A_overlap_buffer[0:self.hop_size, :, m]
+            self.loudspeaker_weighted_response_A_to_A_buffer[:(self.statistics_buffer_length - self.hop_size), :, m] = self.loudspeaker_weighted_response_A_to_A_buffer[idx, :, m]
+            self.loudspeaker_weighted_response_A_to_A_buffer[(self.statistics_buffer_length - self.hop_size):, :, m] = self.loudspeaker_weighted_response_A_to_A_overlap_buffer[0:self.hop_size, :, m]
 
-                self.loudspeaker_weighted_response_A_to_B_buffer[:, :, m] = np.concatenate([
-                    self.loudspeaker_weighted_response_A_to_B_buffer[idx, :, m], 
-                    self.loudspeaker_weighted_response_A_to_B_overlap_buffer[0:self.hop_size, :, m]])
+            self.loudspeaker_weighted_response_A_to_B_buffer[:, :, m] = np.concatenate([
+                self.loudspeaker_weighted_response_A_to_B_buffer[idx, :, m], 
+                self.loudspeaker_weighted_response_A_to_B_overlap_buffer[0:self.hop_size, :, m]])
 
-            if self.run_B:
-                self.loudspeaker_weighted_response_B_to_A_buffer[:, :, m] = np.concatenate([
-                    self.loudspeaker_weighted_response_B_to_A_buffer[idx, :, m], 
-                    self.loudspeaker_weighted_response_B_to_A_overlap_buffer[0:self.hop_size, :, m]])
+            self.loudspeaker_weighted_response_B_to_A_buffer[:, :, m] = np.concatenate([
+                self.loudspeaker_weighted_response_B_to_A_buffer[idx, :, m], 
+                self.loudspeaker_weighted_response_B_to_A_overlap_buffer[0:self.hop_size, :, m]])
 
-                self.loudspeaker_weighted_response_B_to_B_buffer[:, :, m] = np.concatenate([
-                    self.loudspeaker_weighted_response_B_to_B_buffer[idx, :, m], 
-                    self.loudspeaker_weighted_response_B_to_B_overlap_buffer[0:self.hop_size, :, m]])
+            self.loudspeaker_weighted_response_B_to_B_buffer[:, :, m] = np.concatenate([
+                self.loudspeaker_weighted_response_B_to_B_buffer[idx, :, m], 
+                self.loudspeaker_weighted_response_B_to_B_overlap_buffer[0:self.hop_size, :, m]])
 
     def update_perceptual_weighting(self, target_A_to_A_spectra,  target_B_to_B_spectra):
         if self.perceptual:
@@ -405,17 +395,13 @@ class apvast:
             self.filter_spectra_B = np.fft.rfft(np.reshape(self.w_B, (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2)
 
     def update_input_blocks(self, input_A, input_B):
-        if self.run_A:
-            self.input_A_block = np.concatenate([self.input_A_block.squeeze(1)[self.hop_size : self.block_size], input_A]).reshape(-1, 1)
-        if self.run_B:
-            self.input_B_block = np.concatenate([self.input_B_block.squeeze(1)[self.hop_size : self.block_size], input_B]).reshape(-1, 1)
+        self.input_A_block = np.concatenate([self.input_A_block.squeeze(1)[self.hop_size : self.block_size], input_A]).reshape(-1, 1)
+        self.input_B_block = np.concatenate([self.input_B_block.squeeze(1)[self.hop_size : self.block_size], input_B]).reshape(-1, 1)
 
     def compute_output_buffers(self):
         # compute input spectra
-        if self.run_A:
-            self.input_spectrum_A = np.fft.rfft(np.multiply(self.window.squeeze(1), self.input_A_block.squeeze(1)), axis=0).reshape(-1, 1)
-        if self.run_B:
-            self.input_spectrum_B = np.fft.rfft(np.multiply(self.window.squeeze(1), self.input_B_block.squeeze(1)), axis=0).reshape(-1, 1)
+        self.input_spectrum_A = np.fft.rfft(np.multiply(self.window.squeeze(1), self.input_A_block.squeeze(1)), axis=0).reshape(-1, 1)
+        self.input_spectrum_B = np.fft.rfft(np.multiply(self.window.squeeze(1), self.input_B_block.squeeze(1)), axis=0).reshape(-1, 1)
 
         # circular convolution with the filter spectra
         if self.run_A:
