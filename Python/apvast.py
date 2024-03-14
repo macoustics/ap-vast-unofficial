@@ -16,7 +16,7 @@ def approx(a, b, rtol=1e-5, atol=1e-15, etol=1e-25):
 # joint diagoanlization
 def jdiag(A, B):
     # throws on non-semidefinite B
-    Bc = np.linalg.cholesky(B) # + 1e-12 * np.eye(B.shape[0]))
+    Bc = np.linalg.cholesky(B + 1e-10 * np.linalg.norm(B) * np.eye(B.shape[0]))
     C0 = sp.linalg.solve_triangular(Bc, A, lower=True)
     C1 = sp.linalg.solve_triangular(np.conj(Bc), C0.T, lower=True).T
     [T, U] = sp.linalg.schur(C1)
