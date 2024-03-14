@@ -1,51 +1,44 @@
-classdef apVast < handle
-    properties
-        % WOLA processing
-        m_hopSize = 0;
-        m_blockSize = 0;
-        m_window = [];
-        m_inputABlock = [];
-        m_inputBBlock = [];
+classdef apVast < handle properties % WOLA processing m_hopSize = 0;
+m_blockSize = 0;
+m_window = [];
+m_inputABlock = [];
+m_inputBBlock = [];
 
-        % RIR + statistics
-        m_rirLength = 0;
-        m_numberOfMics = 0;
-        m_numberOfSrcs = 0;
-        m_rirA = [];
-        m_rirB = [];
-        m_targetRirA = [];
-        m_targetRirB = [];
-        m_rirAtoAState = [];
-        m_rirAtoBState = [];
-        m_targetRirAtoAState = [];
-        m_rirBtoAState = [];
-        m_rirBtoBState = [];
-        m_targetRirBtoBState = [];
-        
+% RIR + statistics m_rirLength = 0;
+m_numberOfMics = 0;
+m_numberOfSrcs = 0;
+m_rirA = [];
+m_rirB = [];
+m_targetRirA = [];
+m_targetRirB = [];
+m_rirAtoAState = [];
+m_rirAtoBState = [];
+m_targetRirAtoAState = [];
+m_rirBtoAState = [];
+m_rirBtoBState = [];
+m_targetRirBtoBState = [];
 
-        % Control filters
-        m_filterLength;
-        m_filters = [];
-        m_mu = 0;
-        m_numberOfEigenvectors = 0;
-        m_filterSpectraA = [];
-        m_filterSpectraB = [];
+% Control filters m_filterLength;
+m_filters = [];
+m_mu = 0;
+m_numberOfEigenvectors = 0;
+m_filterSpectraA = [];
+m_filterSpectraB = [];
 
-        % Loudspeaker response buffers
-        m_loudspeakerResponseAtoABuffer = [];
-        m_loudspeakerResponseAtoBBuffer = [];
-        m_loudspeakerResponseBtoABuffer = [];
-        m_loudspeakerResponseBtoBBuffer = [];
-        m_loudspeakerTargetResponseAtoABuffer = [];
-        m_loudspeakerTargetResponseBtoBBuffer = [];
+% Loudspeaker response buffers m_loudspeakerResponseAtoABuffer = [];
+m_loudspeakerResponseAtoBBuffer = [];
+m_loudspeakerResponseBtoABuffer = [];
+m_loudspeakerResponseBtoBBuffer = [];
+m_loudspeakerTargetResponseAtoABuffer = [];
+m_loudspeakerTargetResponseBtoBBuffer = [];
 
-        % Weighted loudspeaker response overlap buffers
+% Weighted loudspeaker response overlap buffers
         m_loudspeakerWeightedResponseAtoAOverlapBuffer = [];
-        m_loudspeakerWeightedResponseAtoBOverlapBuffer = [];
-        m_loudspeakerWeightedResponseBtoAOverlapBuffer = [];
-        m_loudspeakerWeightedResponseBtoBOverlapBuffer = [];
-        m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer = [];
-        m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
+m_loudspeakerWeightedResponseAtoBOverlapBuffer = [];
+m_loudspeakerWeightedResponseBtoAOverlapBuffer = [];
+m_loudspeakerWeightedResponseBtoBOverlapBuffer = [];
+m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer = [];
+m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
 
         % Weighted loudspeaker response buffers (used for computing the
         % statistics)
@@ -60,38 +53,29 @@ classdef apVast < handle
         m_RAtoB = [];
         m_RBtoA = [];
         m_RBtoB = [];
-        m_rA =  [];
-        m_rB =  [];
+        m_rA = [];
+        m_rB = [];
 
-        % Intermediate results (used for debugging)
-        m_UA = [];
-        m_UB = [];
-        m_wA = [];
-        m_wB = [];
-        m_lambdaA = [];
-        m_lambdaB = [];
-
-        % Perceptual weighting
-        m_weightingSpectraA = [];
+        % Perceptual weighting m_weightingSpectraA = [];
         m_weightingSpectraB = [];
 
-        % Output overlap buffers
-        m_outputAOverlapBuffer = [];
+        % Output overlap buffers m_outputAOverlapBuffer = [];
         m_outputBOverlapBuffer = [];
-    end
-    methods 
-        function apVast = apVast(blockSize, rirA, rirB, filterLength, ModellingDelay, ReferenceIndexA, ReferenceIndexB, numberOfEigenvectors, mu, statisticsBufferLength)
-            % Input parameters:
-            % -----------------------
-            % blockSize     Integer
-            %               Size of the input buffer blocks that will be
-            %               processed.
-            % rirB:         Matrix (ndim = 3)
-            %               Impulse responses from each source to each microphone in 
-            %               the bright zone. Size = [rirLength, numberOfSrc, numberOfMics];
-            % rirD:         Matrix (ndim = 3)
-            %               Impulse responses from each source to each microphone in
-            %               the dark zone. Size = [rirLength, numberOfSrc, numberOfMics];
+        end methods function apVast =
+            apVast(blockSize, rirA, rirB, filterLength, ModellingDelay,
+                   ReferenceIndexA, ReferenceIndexB, numberOfEigenvectors, mu,
+                   statisticsBufferLength) %
+            Input parameters
+            : %
+              -- -- -- -- -- -- -- -- -- -- -- - % blockSize Integer %
+              Size of the input buffer blocks that will be % processed.%
+              rirB : Matrix(ndim = 3) %
+                     Impulse responses from each source to each microphone in %
+                     the bright zone.Size =
+                [ rirLength, numberOfSrc, numberOfMics ];
+        % rirD : Matrix(ndim = 3) %
+                 Impulse responses from each source to each microphone in %
+                 the dark zone.Size = [ rirLength, numberOfSrc, numberOfMics ];
             % filterLength  Scalar
             %               Length of FIR filter for each loudspeaker
             % ModellingDelay    Integer
@@ -110,9 +94,9 @@ classdef apVast < handle
 
             % Initialize WOLA parameters
             apVast.m_blockSize = blockSize;
-            apVast.m_hopSize = blockSize/2;
-            if mod(blockSize,2) ~= 0
-                error('BlockSize must be an even number');
+            apVast.m_hopSize = blockSize / 2;
+            if mod (blockSize, 2)
+              ~ = 0 error('BlockSize must be an even number');
             end
             apVast.m_window =  sin(pi/blockSize*(0:(blockSize-1)).');
             apVast.m_inputABlock = zeros(blockSize,1);
@@ -162,6 +146,9 @@ classdef apVast < handle
             % Initialize loudspeaker weighted response buffers (used for
             % computing the statistics)
             apVast.m_statisticsBufferLength = statisticsBufferLength;
+            if statisticsBufferLength < 2*filterLength
+                error('The statisticsBufferLength is chosen smaller than the 2*filterLength-1. This ensures that the sample covariance matrices are guaranteed to be rank deficient.')
+            end
             apVast.m_loudspeakerWeightedResponseAtoABuffer = zeros(statisticsBufferLength, apVast.m_numberOfSrcs, apVast.m_numberOfMics);
             apVast.m_loudspeakerWeightedResponseAtoBBuffer = zeros(statisticsBufferLength, apVast.m_numberOfSrcs, apVast.m_numberOfMics);
             apVast.m_loudspeakerWeightedResponseBtoABuffer = zeros(statisticsBufferLength, apVast.m_numberOfSrcs, apVast.m_numberOfMics);
@@ -278,6 +265,8 @@ classdef apVast < handle
                 obj.m_loudspeakerWeightedTargetResponseAtoABuffer(:,mIdx) = [obj.m_loudspeakerWeightedTargetResponseAtoABuffer(idx,mIdx); obj.m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer(1:obj.m_hopSize,mIdx)];
                 obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(:,mIdx) = [obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(idx,mIdx); obj.m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer(1:obj.m_hopSize,mIdx)];
             end
+%             keyboard
+%             plot(obj.m_loudspeakerWeightedTargetResponseAtoABuffer(:,1));
         end
 
         function [obj] = updateWeightedLoudspeakerResponses(obj)
@@ -359,30 +348,62 @@ classdef apVast < handle
                 obj (1,1) apVast
             end
             obj.resetStatistics();
-            for nIdx = 1 : obj.m_statisticsBufferLength - obj.m_filterLength
-                idx = nIdx + (0:obj.m_filterLength-1);
-                for mIdx = 1 : obj.m_numberOfMics
-                    tmp = flipud(obj.m_loudspeakerWeightedResponseAtoABuffer(idx,:,mIdx));
-                    yAtoA = tmp(:);
-                    tmp = flipud(obj.m_loudspeakerWeightedResponseAtoBBuffer(idx,:,mIdx));
-                    yAtoB = tmp(:);
-                    tmp = flipud(obj.m_loudspeakerWeightedResponseBtoABuffer(idx,:,mIdx));
-                    yBtoA = tmp(:);
-                    tmp = flipud(obj.m_loudspeakerWeightedResponseBtoBBuffer(idx,:,mIdx));
-                    yBtoB = tmp(:);
 
-                    dA = flipud(obj.m_loudspeakerWeightedTargetResponseAtoABuffer(idx,mIdx));
-                    dB = flipud(obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(idx,mIdx));
-
-                    obj.m_RAtoA = obj.m_RAtoA + yAtoA * yAtoA';
-                    obj.m_RAtoB = obj.m_RAtoB + yAtoB * yAtoB';
-                    obj.m_RBtoA = obj.m_RBtoA + yBtoA * yBtoA';
-                    obj.m_RBtoB = obj.m_RBtoB + yBtoB * yBtoB';
-
-                    obj.m_rA = obj.m_rA + yAtoA * dA(1);
-                    obj.m_rB = obj.m_rB + yBtoB * dB(1);
+            for mIdx = 1 : obj.m_numberOfMics
+                Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
+                for sIdx = 0 : obj.m_numberOfSrcs - 1
+                    Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseAtoABuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseAtoABuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
                 end
+                obj.m_RAtoA = obj.m_RAtoA + Y*Y.';
+                obj.m_rA = obj.m_rA + Y * (obj.m_loudspeakerWeightedTargetResponseAtoABuffer(obj.m_filterLength:end,mIdx));
+
+                Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
+                for sIdx = 0 : obj.m_numberOfSrcs - 1
+                    Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseAtoBBuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseAtoBBuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
+                end
+                obj.m_RAtoB = obj.m_RAtoB + Y*Y.';
+
+                Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
+                for sIdx = 0 : obj.m_numberOfSrcs - 1
+                    Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseBtoABuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseBtoABuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
+                end
+                obj.m_RBtoA = obj.m_RBtoA + Y*Y.';
+
+                Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
+                for sIdx = 0 : obj.m_numberOfSrcs - 1
+                    Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseBtoBBuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseBtoBBuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
+                end
+                obj.m_RBtoB = obj.m_RBtoB + Y*Y.';
+                obj.m_rB = obj.m_rB + Y * (obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(obj.m_filterLength:end,mIdx));
+
             end
+
+            % Depreciated implementation:
+%             for nIdx = 1 : obj.m_statisticsBufferLength - obj.m_filterLength + 1
+%                 idx = nIdx + (0:obj.m_filterLength-1);
+%                 for mIdx = 1 : obj.m_numberOfMics
+%                     tmp = flipud(obj.m_loudspeakerWeightedResponseAtoABuffer(idx,:,mIdx));
+%                     yAtoA = tmp(:);
+%                     tmp = flipud(obj.m_loudspeakerWeightedResponseAtoBBuffer(idx,:,mIdx));
+%                     yAtoB = tmp(:);
+%                     tmp = flipud(obj.m_loudspeakerWeightedResponseBtoABuffer(idx,:,mIdx));
+%                     yBtoA = tmp(:);
+%                     tmp = flipud(obj.m_loudspeakerWeightedResponseBtoBBuffer(idx,:,mIdx));
+%                     yBtoB = tmp(:);
+% 
+%                     dA = flipud(obj.m_loudspeakerWeightedTargetResponseAtoABuffer(idx,mIdx));
+%                     dB = flipud(obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(idx,mIdx));
+% 
+%                     obj.m_RAtoA = obj.m_RAtoA + yAtoA * yAtoA';
+%                     obj.m_RAtoB = obj.m_RAtoB + yAtoB * yAtoB';
+%                     obj.m_RBtoA = obj.m_RBtoA + yBtoA * yBtoA';
+%                     obj.m_RBtoB = obj.m_RBtoB + yBtoB * yBtoB';
+% 
+%                     obj.m_rA = obj.m_rA + yAtoA * dA(1);
+%                     obj.m_rB = obj.m_rB + yBtoB * dB(1);
+%                 end
+%             end
+
         end
 
         function [obj] = resetStatistics(obj)
@@ -410,26 +431,52 @@ classdef apVast < handle
                 obj (1,1) apVast
             end
             % Joint diagonalization
-            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', false);
-            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', false);
-
-            % Store for debugging
-            obj.m_UA = UA 
-            obj.m_UB = UB 
-            obj.m_lambdaA = lambdaA
-            obj.m_lambdaB = lambdaB
-
+%             disp(['Condition number of RA to A: ' num2str(cond(obj.m_RAtoA),'%.1e')])
+%             disp(['Condition number of RB to B: ' num2str(cond(obj.m_RBtoB),'%.1e')])
+%             obj.diagonalLoading();
+            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', true);
+            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', true);
+            
             % Determine filters
-            obj.m_wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
-            obj.m_wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+            wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+            wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
             for i = 1:numberOfEigenvectors
-                obj.m_wA = obj.m_wA + (obj.m_UA(:,i).'*obj.m_rA)/(obj.m_lambdaA(i) + mu) * obj.m_UA(:,i);
-                obj.m_wB = obj.m_wB + (obj.m_UB(:,i).'*obj.m_rB)/(obj.m_lambdaB(i) + mu) * obj.m_UB(:,i);
+                wA = wA + (UA(:,i).'*obj.m_rA)/(lambdaA(i) + mu) * UA(:,i);
+                wB = wB + (UB(:,i).'*obj.m_rB)/(lambdaB(i) + mu) * UB(:,i);
+            end
+            if any(isnan(wA))
+                wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+                keyboard
+            end
+            if any(isnan(wB))
+                wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
             end
 
             % Determine filter spectra
-            obj.m_filterSpectraA = fft(reshape(obj.m_wA, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
-            obj.m_filterSpectraB = fft(reshape(obj.m_wB, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+            obj.m_filterSpectraA = fft(reshape(wA, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+            obj.m_filterSpectraB = fft(reshape(wB, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+        end
+
+        function [obj] = diagonalLoading(obj)
+            arguments (Input)
+                obj (1,1) apVast
+            end
+            arguments (Output)
+                obj (1,1) apVast
+            end
+            condLimit = 1e-10;
+            if cond(obj.m_RAtoA) > condLimit
+                obj.m_RAtoA = obj.m_RAtoA + condLimit*eye(size(obj.m_RAtoA)) * norm(obj.m_RAtoA);
+            end
+            if cond(obj.m_RAtoB) > condLimit
+                obj.m_RAtoB = obj.m_RAtoB + condLimit*eye(size(obj.m_RAtoB)) * norm(obj.m_RAtoB);
+            end
+            if cond(obj.m_RBtoA) > condLimit
+                obj.m_RBtoA = obj.m_RBtoA + condLimit*eye(size(obj.m_RBtoA)) * norm(obj.m_RBtoA);
+            end
+            if cond(obj.m_RBtoB) > condLimit
+                obj.m_RBtoB = obj.m_RBtoB + condLimit*eye(size(obj.m_RBtoB)) * norm(obj.m_RBtoB);
+            end
         end
 
         function [obj] = updateInputBlocks(obj, inputA, inputB)
