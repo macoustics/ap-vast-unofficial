@@ -63,6 +63,10 @@ classdef apVast < handle
         m_rA =  [];
         m_rB =  [];
 
+        % Debugging
+        m_wA=  [];
+        m_wB=  [];
+
         % Perceptual weighting
         m_weightingSpectraA = [];
         m_weightingSpectraB = [];
@@ -459,6 +463,9 @@ classdef apVast < handle
             if any(isnan(wB))
                 wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
             end
+
+            obj.m_wA = wA
+            obj.m_wB = wB
 
             % Determine filter spectra
             obj.m_filterSpectraA = fft(reshape(wA, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
