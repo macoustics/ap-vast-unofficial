@@ -1,44 +1,51 @@
-classdef apVast < handle properties % WOLA processing m_hopSize = 0;
-m_blockSize = 0;
-m_window = [];
-m_inputABlock = [];
-m_inputBBlock = [];
+classdef apVast < handle
+    properties
+        % WOLA processing
+        m_hopSize = 0;
+        m_blockSize = 0;
+        m_window = [];
+        m_inputABlock = [];
+        m_inputBBlock = [];
 
-% RIR + statistics m_rirLength = 0;
-m_numberOfMics = 0;
-m_numberOfSrcs = 0;
-m_rirA = [];
-m_rirB = [];
-m_targetRirA = [];
-m_targetRirB = [];
-m_rirAtoAState = [];
-m_rirAtoBState = [];
-m_targetRirAtoAState = [];
-m_rirBtoAState = [];
-m_rirBtoBState = [];
-m_targetRirBtoBState = [];
+        % RIR + statistics
+        m_rirLength = 0;
+        m_numberOfMics = 0;
+        m_numberOfSrcs = 0;
+        m_rirA = [];
+        m_rirB = [];
+        m_targetRirA = [];
+        m_targetRirB = [];
+        m_rirAtoAState = [];
+        m_rirAtoBState = [];
+        m_targetRirAtoAState = [];
+        m_rirBtoAState = [];
+        m_rirBtoBState = [];
+        m_targetRirBtoBState = [];
+        
 
-% Control filters m_filterLength;
-m_filters = [];
-m_mu = 0;
-m_numberOfEigenvectors = 0;
-m_filterSpectraA = [];
-m_filterSpectraB = [];
+        % Control filters
+        m_filterLength;
+        m_filters = [];
+        m_mu = 0;
+        m_numberOfEigenvectors = 0;
+        m_filterSpectraA = [];
+        m_filterSpectraB = [];
 
-% Loudspeaker response buffers m_loudspeakerResponseAtoABuffer = [];
-m_loudspeakerResponseAtoBBuffer = [];
-m_loudspeakerResponseBtoABuffer = [];
-m_loudspeakerResponseBtoBBuffer = [];
-m_loudspeakerTargetResponseAtoABuffer = [];
-m_loudspeakerTargetResponseBtoBBuffer = [];
+        % Loudspeaker response buffers
+        m_loudspeakerResponseAtoABuffer = [];
+        m_loudspeakerResponseAtoBBuffer = [];
+        m_loudspeakerResponseBtoABuffer = [];
+        m_loudspeakerResponseBtoBBuffer = [];
+        m_loudspeakerTargetResponseAtoABuffer = [];
+        m_loudspeakerTargetResponseBtoBBuffer = [];
 
-% Weighted loudspeaker response overlap buffers
+        % Weighted loudspeaker response overlap buffers
         m_loudspeakerWeightedResponseAtoAOverlapBuffer = [];
-m_loudspeakerWeightedResponseAtoBOverlapBuffer = [];
-m_loudspeakerWeightedResponseBtoAOverlapBuffer = [];
-m_loudspeakerWeightedResponseBtoBOverlapBuffer = [];
-m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer = [];
-m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
+        m_loudspeakerWeightedResponseAtoBOverlapBuffer = [];
+        m_loudspeakerWeightedResponseBtoAOverlapBuffer = [];
+        m_loudspeakerWeightedResponseBtoBOverlapBuffer = [];
+        m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer = [];
+        m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
 
         % Weighted loudspeaker response buffers (used for computing the
         % statistics)
@@ -53,29 +60,30 @@ m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
         m_RAtoB = [];
         m_RBtoA = [];
         m_RBtoB = [];
-        m_rA = [];
-        m_rB = [];
+        m_rA =  [];
+        m_rB =  [];
 
-        % Perceptual weighting m_weightingSpectraA = [];
+        % Perceptual weighting
+        m_weightingSpectraA = [];
         m_weightingSpectraB = [];
 
-        % Output overlap buffers m_outputAOverlapBuffer = [];
+        % Output overlap buffers
+        m_outputAOverlapBuffer = [];
         m_outputBOverlapBuffer = [];
-        end methods function apVast =
-            apVast(blockSize, rirA, rirB, filterLength, ModellingDelay,
-                   ReferenceIndexA, ReferenceIndexB, numberOfEigenvectors, mu,
-                   statisticsBufferLength) %
-            Input parameters
-            : %
-              -- -- -- -- -- -- -- -- -- -- -- - % blockSize Integer %
-              Size of the input buffer blocks that will be % processed.%
-              rirB : Matrix(ndim = 3) %
-                     Impulse responses from each source to each microphone in %
-                     the bright zone.Size =
-                [ rirLength, numberOfSrc, numberOfMics ];
-        % rirD : Matrix(ndim = 3) %
-                 Impulse responses from each source to each microphone in %
-                 the dark zone.Size = [ rirLength, numberOfSrc, numberOfMics ];
+    end
+    methods 
+        function apVast = apVast(blockSize, rirA, rirB, filterLength, ModellingDelay, ReferenceIndexA, ReferenceIndexB, numberOfEigenvectors, mu, statisticsBufferLength)
+            % Input parameters:
+            % -----------------------
+            % blockSize     Integer
+            %               Size of the input buffer blocks that will be
+            %               processed.
+            % rirB:         Matrix (ndim = 3)
+            %               Impulse responses from each source to each microphone in 
+            %               the bright zone. Size = [rirLength, numberOfSrc, numberOfMics];
+            % rirD:         Matrix (ndim = 3)
+            %               Impulse responses from each source to each microphone in
+            %               the dark zone. Size = [rirLength, numberOfSrc, numberOfMics];
             % filterLength  Scalar
             %               Length of FIR filter for each loudspeaker
             % ModellingDelay    Integer
@@ -94,9 +102,9 @@ m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
 
             % Initialize WOLA parameters
             apVast.m_blockSize = blockSize;
-            apVast.m_hopSize = blockSize / 2;
-            if mod (blockSize, 2)
-              ~ = 0 error('BlockSize must be an even number');
+            apVast.m_hopSize = blockSize/2;
+            if mod(blockSize,2) ~= 0
+                error('BlockSize must be an even number');
             end
             apVast.m_window =  sin(pi/blockSize*(0:(blockSize-1)).');
             apVast.m_inputABlock = zeros(blockSize,1);
@@ -433,9 +441,9 @@ m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer = [];
             % Joint diagonalization
 %             disp(['Condition number of RA to A: ' num2str(cond(obj.m_RAtoA),'%.1e')])
 %             disp(['Condition number of RB to B: ' num2str(cond(obj.m_RBtoB),'%.1e')])
-%             obj.diagonalLoading();
-            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', true);
-            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', true);
+            obj.diagonalLoading();
+            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', false);
+            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', false);
             
             % Determine filters
             wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
