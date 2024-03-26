@@ -5,5 +5,3 @@ Please note that the jdiag.m function in the MATLAB implementation for calculati
 
 This repo presents a brute-force implementation of the ap-vast method as described in the cited article. This is used in our own publication work as a reference method for comparison. The presented implementation is not fast by any means. For inspirations regarding fast implementations, people are encouraged to go check out https://github.com/nightmoonbridge/vast_dft and the associated publication.
 
-Known bugs:
- - The MATLAB implementation does not currently use a perceptual weighting model, although it is prepared for it. The current implementation provides equal weighting to all frequency bins.
