@@ -7,6 +7,6 @@ This repo presents a brute-force implementation of the ap-vast method as describ
 
 # Existing patents
 While the code for this unofficial implementation is openly available, people with commercial interests should be aware of the following patents:
-EP 3 797 528: https://patents.google.com/patent/EP3797528A1/en?oq=ep3797528
-US 2021/0235213: https://patents.google.com/patent/US20210235213A1/en?oq=us20210235213
-US 11,516,614: https://patents.google.com/patent/US11516614B2/en?oq=us11516614
+ - EP 3 797 528: https://patents.google.com/patent/EP3797528A1/en?oq=ep3797528
+ - US 2021/0235213: https://patents.google.com/patent/US20210235213A1/en?oq=us20210235213
+ - US 11,516,614: https://patents.google.com/patent/US11516614B2/en?oq=us11516614
