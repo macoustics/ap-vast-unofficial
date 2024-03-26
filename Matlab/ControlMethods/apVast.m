@@ -1,3 +1,9 @@
+% Implementation of the block based sound zones algorithm described in T.
+% Lee, J. K. Nielsen, M. G. Christensen, "Signal-Adaptive and Perceptually
+% Optimized Sound Zones With Variable Spand Trade-Off Filters", IEEE/ACM
+% Transactions on Audio, Speech, and Language Processing, vol. 28, 2020,
+% pp. 2412-2426.
+
 classdef apVast < handle
     properties
         % WOLA processing
@@ -25,11 +31,15 @@ classdef apVast < handle
 
         % Control filters
         m_filterLength;
+        m_modellingDelay = 0;
+        m_referenceIndexA = 0;
+        m_referenceIndexB = 0;
         m_filters = [];
         m_mu = 0;
         m_numberOfEigenvectors = 0;
         m_filterSpectraA = [];
         m_filterSpectraB = [];
+        m_calculateZoneB = true;
 
         % Loudspeaker response buffers
         m_loudspeakerResponseAtoABuffer = [];
@@ -38,6 +48,12 @@ classdef apVast < handle
         m_loudspeakerResponseBtoBBuffer = [];
         m_loudspeakerTargetResponseAtoABuffer = [];
         m_loudspeakerTargetResponseBtoBBuffer = [];
+
+        % Perceptual model
+        m_Fs = 0;
+        m_perceptualModel = [];
+        m_forwardScale = 0; % Used to compute spectrum in dB SPL
+        m_inverseScale = 0; % Used to compute back to digital representation
 
         % Weighted loudspeaker response overlap buffers
         m_loudspeakerWeightedResponseAtoAOverlapBuffer = [];
@@ -68,11 +84,14 @@ classdef apVast < handle
         m_weightingSpectraB = [];
 
         % Output overlap buffers
+        m_numberOfSolutions = 0;
         m_outputAOverlapBuffer = [];
         m_outputBOverlapBuffer = [];
+        m_outputTargetAOverlapBuffer = [];
+        m_outputTargetBOverlapBuffer = [];
     end
     methods 
-        function apVast = apVast(blockSize, rirA, rirB, filterLength, ModellingDelay, ReferenceIndexA, ReferenceIndexB, numberOfEigenvectors, mu, statisticsBufferLength)
+        function apVast = apVast(blockSize, rirA, rirB, filterLength, ModellingDelay, ReferenceIndexA, ReferenceIndexB, numberOfEigenvectors, mu, statisticsBufferLength, Fs, pressureScale, calcZoneB)
             % Input parameters:
             % -----------------------
             % blockSize     Integer
@@ -91,14 +110,28 @@ classdef apVast < handle
             % ReferenceIndex:   Integer in [1,numberOfSrcs]
             %               Index for the reference loudspeaker used to define the
             %               target audio signal in the bright zone.
-            % numberOfEigenvectors   Integer
+            % numberOfEigenvectors   1D Integer array
             %               Number of eigenvectors from the joint diagonalization,
             %               which are used to approximate the solution. If mu = 1,
             %               numberOfEigenvectors = 1 corresponds to the BACC solution
             %               and numberOfEigenvectors = filterLength*numberOfSrcs corresponds to
-            %               pressure matching.
+            %               pressure matching. If
+            %               length(numberOfEigenvectors) > 1, one solution
+            %               per element will be returned.
             % mu            Scalar \in [0,1]
             %               Adjustment parameter for the variable span linear filters
+            % statisticsBufferLength    Integer
+            %               Size (in samples) of temporary buffer used to calculate the
+            %               covariance matrices
+            % Fs            Integer
+            %               Sampling rate
+            % pressureScale Scalar
+            %               pressure in dB SPL corresponding to 0 dBFS in
+            %               the digital representation
+            % calcZoneB     boolean
+            %               true if filters should be determined for zoneB
+            %               otherwise false. If false the filters will stay
+            %               at zero.
 
             % Initialize WOLA parameters
             apVast.m_blockSize = blockSize;
@@ -118,15 +151,18 @@ classdef apVast < handle
             apVast.m_numberOfMics = size(rirB,3);
             apVast.m_targetRirA = zeros(apVast.m_rirLength, apVast.m_numberOfMics);
             apVast.m_targetRirB = zeros(apVast.m_rirLength, apVast.m_numberOfMics);
+            apVast.m_modellingDelay = ModellingDelay;
+            apVast.m_referenceIndexA = ReferenceIndexA;
+            apVast.m_referenceIndexB = ReferenceIndexB;
             for mIdx = 1:apVast.m_numberOfMics
                 apVast.m_targetRirA(:,mIdx) = [zeros(ModellingDelay,1); squeeze(rirA(1:apVast.m_rirLength-ModellingDelay,ReferenceIndexA,mIdx))];
                 apVast.m_targetRirB(:,mIdx) = [zeros(ModellingDelay,1); squeeze(rirB(1:apVast.m_rirLength-ModellingDelay,ReferenceIndexB,mIdx))];
             end
             apVast.m_rirAtoAState = zeros(apVast.m_rirLength-1,apVast.m_numberOfSrcs, apVast.m_numberOfMics);
             apVast.m_rirAtoBState = zeros(apVast.m_rirLength-1,apVast.m_numberOfSrcs, apVast.m_numberOfMics);
-            apVast.m_targetRirAtoAState = zeros(apVast.m_rirLength-1, apVast.m_numberOfMics);
             apVast.m_rirBtoAState = zeros(apVast.m_rirLength-1,apVast.m_numberOfSrcs, apVast.m_numberOfMics);
             apVast.m_rirBtoBState = zeros(apVast.m_rirLength-1,apVast.m_numberOfSrcs, apVast.m_numberOfMics);
+            apVast.m_targetRirAtoAState = zeros(apVast.m_rirLength-1, apVast.m_numberOfMics);
             apVast.m_targetRirBtoBState = zeros(apVast.m_rirLength-1, apVast.m_numberOfMics);
             
             % Initialize control filters
@@ -165,20 +201,34 @@ classdef apVast < handle
             apVast.m_loudspeakerWeightedTargetResponseBtoBBuffer = zeros(statisticsBufferLength, apVast.m_numberOfMics);
 
             % Initialize output overlap buffers
-            apVast.m_outputAOverlapBuffer = zeros(blockSize, apVast.m_numberOfSrcs);
-            apVast.m_outputBOverlapBuffer = zeros(blockSize, apVast.m_numberOfSrcs);
+            apVast.m_numberOfSolutions = length(numberOfEigenvectors);
+            apVast.m_outputAOverlapBuffer = zeros(blockSize, apVast.m_numberOfSrcs, apVast.m_numberOfSolutions);
+            apVast.m_outputBOverlapBuffer = zeros(blockSize, apVast.m_numberOfSrcs, apVast.m_numberOfSolutions);
+            apVast.m_outputTargetAOverlapBuffer = zeros(blockSize, apVast.m_numberOfSrcs);
+            apVast.m_outputTargetBOverlapBuffer = zeros(blockSize, apVast.m_numberOfSrcs);
+
+            % Initialize perceptual model
+            apVast.m_Fs = Fs;
+            apVast.m_perceptualModel = perceptualModel(blockSize, Fs, pressureScale);
+            apVast.m_forwardScale = sqrt(2)/blockSize;
+            apVast.m_inverseScale = blockSize/sqrt(2);
+
+            % Switch for calculating zone B
+            apVast.m_calculateZoneB = calcZoneB;
         end
 
         %% Main function (public interface)
-        function [outputBuffersA, outputBuffersB, obj] = processInputBuffer(obj, inputA, inputB)
+        function [outputBuffersA, outputBuffersB, targetOutputBuffersA, targetOutputBuffersB, obj] = processInputBuffer(obj, inputA, inputB)
             arguments (Input)
                 obj (1,1) apVast
                 inputA (:, 1)
                 inputB (:, 1)
             end
             arguments (Output)
-                outputBuffersA (:,:) double
-                outputBuffersB (:,:) double
+                outputBuffersA (:,:,:) double
+                outputBuffersB (:,:,:) double
+                targetOutputBuffersA (:,:) double
+                targetOutputBuffersB (:,:) double
                 obj (1,1) apVast
             end
             if length(inputA) ~= obj.m_hopSize
@@ -191,6 +241,7 @@ classdef apVast < handle
             obj.calculateFilterSpectra(obj.m_mu, obj.m_numberOfEigenvectors);
             obj.updateInputBlocks(inputA, inputB);
             [outputBuffersA, outputBuffersB, obj] = obj.computeOutputBuffers();
+            [targetOutputBuffersA, targetOutputBuffersB, obj] = obj.computeTargetOutputBuffers();
         end
 
         %% Helper functions (should be private)
@@ -245,8 +296,8 @@ classdef apVast < handle
             targetAtoASpectra = zeros(obj.m_blockSize, obj.m_numberOfMics);
             targetBtoBSpectra = zeros(obj.m_blockSize, obj.m_numberOfMics);
             for mIdx = 1 : obj.m_numberOfMics
-                targetAtoASpectra(:,mIdx) = fft(obj.m_window .* obj.m_loudspeakerTargetResponseAtoABuffer(:,mIdx));
-                targetBtoBSpectra(:,mIdx) = fft(obj.m_window .* obj.m_loudspeakerTargetResponseBtoBBuffer(:,mIdx));
+                targetAtoASpectra(:,mIdx) = obj.m_forwardScale*fft(obj.m_window .* obj.m_loudspeakerTargetResponseAtoABuffer(:,mIdx));
+                targetBtoBSpectra(:,mIdx) = obj.m_forwardScale*fft(obj.m_window .* obj.m_loudspeakerTargetResponseBtoBBuffer(:,mIdx));
             end
 
             obj.updatePerceptualWeighting(targetAtoASpectra, targetBtoBSpectra);
@@ -259,11 +310,11 @@ classdef apVast < handle
             for mIdx = 1 : obj.m_numberOfMics
                 % Zone A
                 tmpOld = obj.m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer(:,mIdx);
-                tmpNew = obj.m_window .* ifft(targetAtoASpectra(:,mIdx));
+                tmpNew = obj.m_inverseScale * obj.m_window .* ifft(targetAtoASpectra(:,mIdx));
                 obj.m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer(:,mIdx) = [tmpOld(obj.m_hopSize+1:obj.m_blockSize); zeros(obj.m_hopSize,1)] + tmpNew;
                 % Zone B
                 tmpOld = obj.m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer(:,mIdx);
-                tmpNew = obj.m_window .* ifft(targetBtoBSpectra(:,mIdx));
+                tmpNew = obj.m_inverseScale * obj.m_window .* ifft(targetBtoBSpectra(:,mIdx));
                 obj.m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer(:,mIdx) = [tmpOld(obj.m_hopSize+1:obj.m_blockSize); zeros(obj.m_hopSize,1)] + tmpNew;
             end
 
@@ -273,8 +324,6 @@ classdef apVast < handle
                 obj.m_loudspeakerWeightedTargetResponseAtoABuffer(:,mIdx) = [obj.m_loudspeakerWeightedTargetResponseAtoABuffer(idx,mIdx); obj.m_loudspeakerWeightedTargetResponseAtoAOverlapBuffer(1:obj.m_hopSize,mIdx)];
                 obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(:,mIdx) = [obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(idx,mIdx); obj.m_loudspeakerWeightedTargetResponseBtoBOverlapBuffer(1:obj.m_hopSize,mIdx)];
             end
-%             keyboard
-%             plot(obj.m_loudspeakerWeightedTargetResponseAtoABuffer(:,1));
         end
 
         function [obj] = updateWeightedLoudspeakerResponses(obj)
@@ -290,10 +339,10 @@ classdef apVast < handle
             BtoASpectra = zeros(obj.m_blockSize, obj.m_numberOfSrcs, obj.m_numberOfMics);
             BtoBSpectra = zeros(obj.m_blockSize, obj.m_numberOfSrcs, obj.m_numberOfMics);
             for mIdx = 1 : obj.m_numberOfMics
-                AtoASpectra(:,:,mIdx) = fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseAtoABuffer(:,:,mIdx));
-                AtoBSpectra(:,:,mIdx) = fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseAtoBBuffer(:,:,mIdx));
-                BtoASpectra(:,:,mIdx) = fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseBtoABuffer(:,:,mIdx));
-                BtoBSpectra(:,:,mIdx) = fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseBtoBBuffer(:,:,mIdx));
+                AtoASpectra(:,:,mIdx) = obj.m_forwardScale * fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseAtoABuffer(:,:,mIdx));
+                AtoBSpectra(:,:,mIdx) = obj.m_forwardScale * fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseAtoBBuffer(:,:,mIdx));
+                BtoASpectra(:,:,mIdx) = obj.m_forwardScale * fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseBtoABuffer(:,:,mIdx));
+                BtoBSpectra(:,:,mIdx) = obj.m_forwardScale * fft(repmat(obj.m_window, 1, obj.m_numberOfSrcs) .* obj.m_loudspeakerResponseBtoBBuffer(:,:,mIdx));
             end
 
             % Circular convolution with weighting filter
@@ -308,19 +357,19 @@ classdef apVast < handle
             for mIdx = 1 : obj.m_numberOfMics
                 % Signal A to Zone A
                 tmpOld = obj.m_loudspeakerWeightedResponseAtoAOverlapBuffer(:,:,mIdx);
-                tmpNew = repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(AtoASpectra(:,:,mIdx), obj.m_blockSize, 1);
+                tmpNew = obj.m_inverseScale * repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(AtoASpectra(:,:,mIdx), obj.m_blockSize, 1);
                 obj.m_loudspeakerWeightedResponseAtoAOverlapBuffer(:,:,mIdx) = [tmpOld(obj.m_hopSize+1:obj.m_blockSize,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + tmpNew;
                 % Signal A to Zone B
                 tmpOld = obj.m_loudspeakerWeightedResponseAtoBOverlapBuffer(:,:,mIdx);
-                tmpNew = repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(AtoBSpectra(:,:,mIdx), obj.m_blockSize, 1);
+                tmpNew = obj.m_inverseScale * repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(AtoBSpectra(:,:,mIdx), obj.m_blockSize, 1);
                 obj.m_loudspeakerWeightedResponseAtoBOverlapBuffer(:,:,mIdx) = [tmpOld(obj.m_hopSize+1:obj.m_blockSize,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + tmpNew;
                 % Signal B to Zone A
                 tmpOld = obj.m_loudspeakerWeightedResponseBtoAOverlapBuffer(:,:,mIdx);
-                tmpNew = repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(BtoASpectra(:,:,mIdx), obj.m_blockSize, 1);
+                tmpNew = obj.m_inverseScale * repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(BtoASpectra(:,:,mIdx), obj.m_blockSize, 1);
                 obj.m_loudspeakerWeightedResponseBtoAOverlapBuffer(:,:,mIdx) = [tmpOld(obj.m_hopSize+1:obj.m_blockSize,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + tmpNew;
                 % Signal B to Zone B
                 tmpOld = obj.m_loudspeakerWeightedResponseBtoBOverlapBuffer(:,:,mIdx);
-                tmpNew = repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(BtoBSpectra(:,:,mIdx), obj.m_blockSize, 1);
+                tmpNew = obj.m_inverseScale * repmat(obj.m_window,1,obj.m_numberOfSrcs) .* ifft(BtoBSpectra(:,:,mIdx), obj.m_blockSize, 1);
                 obj.m_loudspeakerWeightedResponseBtoBOverlapBuffer(:,:,mIdx) = [tmpOld(obj.m_hopSize+1:obj.m_blockSize,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + tmpNew;
             end
 
@@ -346,6 +395,16 @@ classdef apVast < handle
             % Update perceptual weighting (currently we have no weighting)
             obj.m_weightingSpectraA = ones(obj.m_blockSize, obj.m_numberOfMics);
             obj.m_weightingSpectraB = ones(obj.m_blockSize, obj.m_numberOfMics);
+            for mIdx = 1 : obj.m_numberOfMics
+                obj.m_perceptualModel.determineSquaredWeightingCurve(targetAtoASpectra(:,mIdx));
+                obj.m_weightingSpectraA(:,mIdx) = obj.m_perceptualModel.getUnitVectorWeightingCurve;
+%                 obj.m_weightingSpectraA(:,mIdx) = obj.m_perceptualModel.getNormalizedWeightingCurve;
+
+                obj.m_perceptualModel.determineSquaredWeightingCurve(targetBtoBSpectra(:,mIdx));
+                obj.m_weightingSpectraB(:,mIdx) = obj.m_perceptualModel.getUnitVectorWeightingCurve;
+%                 obj.m_weightingSpectraB(:,mIdx) = obj.m_perceptualModel.getNormalizedWeightingCurve;
+            end
+            
         end
 
         function [obj] = updateStatistics(obj)
@@ -371,22 +430,32 @@ classdef apVast < handle
                 end
                 obj.m_RAtoB = obj.m_RAtoB + Y*Y.';
 
-                Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
-                for sIdx = 0 : obj.m_numberOfSrcs - 1
-                    Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseBtoABuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseBtoABuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
+                if obj.m_calculateZoneB
+                    Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
+                    for sIdx = 0 : obj.m_numberOfSrcs - 1
+                        Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseBtoABuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseBtoABuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
+                    end
+                    obj.m_RBtoA = obj.m_RBtoA + Y*Y.';
+    
+                    Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
+                    for sIdx = 0 : obj.m_numberOfSrcs - 1
+                        Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseBtoBBuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseBtoBBuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
+                    end
+                    obj.m_RBtoB = obj.m_RBtoB + Y*Y.';
+                    obj.m_rB = obj.m_rB + Y * (obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(obj.m_filterLength:end,mIdx));
                 end
-                obj.m_RBtoA = obj.m_RBtoA + Y*Y.';
-
-                Y = zeros(obj.m_filterLength*obj.m_numberOfSrcs, obj.m_statisticsBufferLength - obj.m_filterLength + 1);
-                for sIdx = 0 : obj.m_numberOfSrcs - 1
-                    Y(sIdx*obj.m_filterLength + (1:obj.m_filterLength),:) = toeplitz(flipud(obj.m_loudspeakerWeightedResponseBtoBBuffer(1:obj.m_filterLength,sIdx+1,mIdx)), obj.m_loudspeakerWeightedResponseBtoBBuffer(obj.m_filterLength:end,sIdx+1,mIdx).');
-                end
-                obj.m_RBtoB = obj.m_RBtoB + Y*Y.';
-                obj.m_rB = obj.m_rB + Y * (obj.m_loudspeakerWeightedTargetResponseBtoBBuffer(obj.m_filterLength:end,mIdx));
-
+            end
+            normalizationFactor = ((obj.m_statisticsBufferLength-obj.m_filterLength+1)*obj.m_numberOfMics);
+            obj.m_RAtoA = obj.m_RAtoA/normalizationFactor;
+            obj.m_rA = obj.m_rA/normalizationFactor;
+            obj.m_RAtoB = obj.m_RAtoB/normalizationFactor;
+            if obj.m_calculateZoneB
+                obj.m_RBtoA = obj.m_RBtoA/normalizationFactor;
+                obj.m_RBtoB = obj.m_RBtoB/normalizationFactor;
+                obj.m_rB = obj.m_rB/normalizationFactor;
             end
 
-            % Depreciated implementation:
+            % Depreciated implementation (SLOW):
 %             for nIdx = 1 : obj.m_statisticsBufferLength - obj.m_filterLength + 1
 %                 idx = nIdx + (0:obj.m_filterLength-1);
 %                 for mIdx = 1 : obj.m_numberOfMics
@@ -433,36 +502,51 @@ classdef apVast < handle
             arguments (Input)
                 obj (1,1) apVast
                 mu (1,1) double
-                numberOfEigenvectors (1,1) double
+                numberOfEigenvectors (:,1) double
             end
             arguments (Output)
                 obj (1,1) apVast
             end
             % Joint diagonalization
-%             disp(['Condition number of RA to A: ' num2str(cond(obj.m_RAtoA),'%.1e')])
-%             disp(['Condition number of RB to B: ' num2str(cond(obj.m_RBtoB),'%.1e')])
             obj.diagonalLoading();
-            [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', false);
-            [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', false);
-            
-            % Determine filters
-            wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
-            wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
-            for i = 1:numberOfEigenvectors
-                wA = wA + (UA(:,i).'*obj.m_rA)/(lambdaA(i) + mu) * UA(:,i);
-                wB = wB + (UB(:,i).'*obj.m_rB)/(lambdaB(i) + mu) * UB(:,i);
-            end
-            if any(isnan(wA))
-                wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+
+            try
+                [UA,lambdaA] = jdiag(obj.m_RAtoA, obj.m_RAtoB, 'vector', false);
+            catch
                 keyboard
             end
-            if any(isnan(wB))
-                wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,1);
+            if obj.m_calculateZoneB
+                [UB,lambdaB] = jdiag(obj.m_RBtoB, obj.m_RBtoA, 'vector', false);
             end
-
-            % Determine filter spectra
-            obj.m_filterSpectraA = fft(reshape(wA, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
-            obj.m_filterSpectraB = fft(reshape(wB, obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+            
+            % Determine filters
+            wA = zeros(obj.m_filterLength*obj.m_numberOfSrcs,obj.m_numberOfSolutions);
+            wB = zeros(obj.m_filterLength*obj.m_numberOfSrcs,obj.m_numberOfSolutions);
+            obj.m_filterSpectraA = zeros(obj.m_blockSize, obj.m_numberOfSrcs, obj.m_numberOfSolutions);
+            obj.m_filterSpectraB = zeros(obj.m_blockSize, obj.m_numberOfSrcs, obj.m_numberOfSolutions);
+            for sIdx = 1:obj.m_numberOfSolutions
+                if sIdx == 1
+                    for i = 1:numberOfEigenvectors(sIdx)
+                        wA(:,sIdx) = wA(:,sIdx) + (UA(:,i).'*obj.m_rA)/(lambdaA(i) + mu) * UA(:,i);
+                        if obj.m_calculateZoneB
+                            wB(:,sIdx) = wB(:,sIdx) + (UB(:,i).'*obj.m_rB)/(lambdaB(i) + mu) * UB(:,i);
+                        end
+                    end
+                else
+                    wA(:,sIdx) = wA(:,sIdx-1);
+                    wB(:,sIdx) = wB(:,sIdx-1);
+                    for i = numberOfEigenvectors(sIdx-1) + 1:numberOfEigenvectors(sIdx)
+                        wA(:,sIdx) = wA(:,sIdx) + (UA(:,i).'*obj.m_rA)/(lambdaA(i) + mu) * UA(:,i);
+                        if obj.m_calculateZoneB
+                            wB(:,sIdx) = wB(:,sIdx) + (UB(:,i).'*obj.m_rB)/(lambdaB(i) + mu) * UB(:,i);
+                        end
+                    end
+                end
+    
+                % Determine filter spectra
+                obj.m_filterSpectraA(:,:,sIdx) = fft(reshape(wA(:,sIdx), obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+                obj.m_filterSpectraB(:,:,sIdx) = fft(reshape(wB(:,sIdx), obj.m_filterLength, obj.m_numberOfSrcs), obj.m_blockSize, 1);
+            end
         end
 
         function [obj] = diagonalLoading(obj)
@@ -472,19 +556,16 @@ classdef apVast < handle
             arguments (Output)
                 obj (1,1) apVast
             end
-            condLimit = 1e-10;
-            if cond(obj.m_RAtoA) > condLimit
-                obj.m_RAtoA = obj.m_RAtoA + condLimit*eye(size(obj.m_RAtoA)) * norm(obj.m_RAtoA);
+            darkCondLimit = 5e-3;
+            brightCondLimit = 1e-8;
+
+            obj.m_RAtoA = obj.m_RAtoA + brightCondLimit*eye(size(obj.m_RAtoA)) * norm(obj.m_RAtoA);
+            obj.m_RAtoB = obj.m_RAtoB + darkCondLimit*eye(size(obj.m_RAtoB)) * norm(obj.m_RAtoB);
+            if obj.m_calculateZoneB
+                obj.m_RBtoA = obj.m_RBtoA + darkCondLimit*eye(size(obj.m_RBtoA)) * norm(obj.m_RBtoA);
+                obj.m_RBtoB = obj.m_RBtoB + brightCondLimit*eye(size(obj.m_RBtoB)) * norm(obj.m_RBtoB);
             end
-            if cond(obj.m_RAtoB) > condLimit
-                obj.m_RAtoB = obj.m_RAtoB + condLimit*eye(size(obj.m_RAtoB)) * norm(obj.m_RAtoB);
-            end
-            if cond(obj.m_RBtoA) > condLimit
-                obj.m_RBtoA = obj.m_RBtoA + condLimit*eye(size(obj.m_RBtoA)) * norm(obj.m_RBtoA);
-            end
-            if cond(obj.m_RBtoB) > condLimit
-                obj.m_RBtoB = obj.m_RBtoB + condLimit*eye(size(obj.m_RBtoB)) * norm(obj.m_RBtoB);
-            end
+
         end
 
         function [obj] = updateInputBlocks(obj, inputA, inputB)
@@ -500,7 +581,7 @@ classdef apVast < handle
             obj.m_inputBBlock = [obj.m_inputBBlock(obj.m_hopSize + 1 : obj.m_blockSize); inputB];
         end
 
-        function [outputBuffersA, outputBuffersB, obj] = computeOutputBuffers(obj)
+        function [outputBuffersA, outputBuffersB, obj] = computeTargetOutputBuffers(obj)
             arguments (Input)
                 obj (1,1) apVast
             end
@@ -513,18 +594,56 @@ classdef apVast < handle
             inputSpectrumA = fft(obj.m_window .* obj.m_inputABlock);
             inputSpectrumB = fft(obj.m_window .* obj.m_inputBBlock);
 
+            targetFiltersA = zeros(obj.m_filterLength, obj.m_numberOfSrcs);
+            targetFiltersB = zeros(obj.m_filterLength, obj.m_numberOfSrcs);
+            targetFiltersA(obj.m_modellingDelay+1, obj.m_referenceIndexA) = 1;
+            targetFiltersB(obj.m_modellingDelay+1, obj.m_referenceIndexB) = 1;
+            targetFilterSpectraA = fft(targetFiltersA, obj.m_blockSize, 1);
+            targetFilterSpectraB = fft(targetFiltersB, obj.m_blockSize, 1);
+
             % Circular convolution with the filter spectra
-            outputSpectraA = repmat(inputSpectrumA, 1, obj.m_numberOfSrcs) .* obj.m_filterSpectraA;
-            outputSpectraB = repmat(inputSpectrumB, 1, obj.m_numberOfSrcs) .* obj.m_filterSpectraB;
+            outputSpectraA = repmat(inputSpectrumA, 1, obj.m_numberOfSrcs) .* targetFilterSpectraA;
+            outputSpectraB = repmat(inputSpectrumB, 1, obj.m_numberOfSrcs) .* targetFilterSpectraB;
 
             % Update the output overlap buffers
             idx = obj.m_hopSize + 1:obj.m_blockSize;
-            obj.m_outputAOverlapBuffer = [obj.m_outputAOverlapBuffer(idx,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + ifft(outputSpectraA, obj.m_blockSize, 1) .* repmat(obj.m_window, 1, obj.m_numberOfSrcs);
-            obj.m_outputBOverlapBuffer = [obj.m_outputBOverlapBuffer(idx,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + ifft(outputSpectraB, obj.m_blockSize, 1) .* repmat(obj.m_window, 1, obj.m_numberOfSrcs);
+            obj.m_outputTargetAOverlapBuffer = [obj.m_outputTargetAOverlapBuffer(idx,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + ifft(outputSpectraA, obj.m_blockSize, 1) .* repmat(obj.m_window, 1, obj.m_numberOfSrcs);
+            obj.m_outputTargetBOverlapBuffer = [obj.m_outputTargetBOverlapBuffer(idx,:); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + ifft(outputSpectraB, obj.m_blockSize, 1) .* repmat(obj.m_window, 1, obj.m_numberOfSrcs);
 
             % Extract samples for the output buffers
-            outputBuffersA = obj.m_outputAOverlapBuffer(1:obj.m_hopSize,:);
-            outputBuffersB = obj.m_outputBOverlapBuffer(1:obj.m_hopSize,:);
+            outputBuffersA = obj.m_outputTargetAOverlapBuffer(1:obj.m_hopSize,:);
+            outputBuffersB = obj.m_outputTargetBOverlapBuffer(1:obj.m_hopSize,:);
+        end
+
+        function [outputBuffersA, outputBuffersB, obj] = computeOutputBuffers(obj)
+            arguments (Input)
+                obj (1,1) apVast
+            end
+            arguments (Output)
+                outputBuffersA (:,:,:) double
+                outputBuffersB (:,:,:) double
+                obj (1,1) apVast
+            end
+            % Compute input spectra
+            inputSpectrumA = fft(obj.m_window .* obj.m_inputABlock);
+            inputSpectrumB = fft(obj.m_window .* obj.m_inputBBlock);
+            
+            outputBuffersA = zeros(obj.m_hopSize, obj.m_numberOfSrcs, obj.m_numberOfSolutions);
+            outputBuffersB = zeros(obj.m_hopSize, obj.m_numberOfSrcs, obj.m_numberOfSolutions);
+            for sIdx = 1:obj.m_numberOfSolutions
+                % Circular convolution with the filter spectra
+                outputSpectraA = repmat(inputSpectrumA, 1, obj.m_numberOfSrcs) .* obj.m_filterSpectraA(:,:,sIdx);
+                outputSpectraB = repmat(inputSpectrumB, 1, obj.m_numberOfSrcs) .* obj.m_filterSpectraB(:,:,sIdx);
+    
+                % Update the output overlap buffers
+                idx = obj.m_hopSize + 1:obj.m_blockSize;
+                obj.m_outputAOverlapBuffer(:,:,sIdx) = [obj.m_outputAOverlapBuffer(idx,:,sIdx); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + ifft(outputSpectraA, obj.m_blockSize, 1) .* repmat(obj.m_window, 1, obj.m_numberOfSrcs);
+                obj.m_outputBOverlapBuffer(:,:,sIdx) = [obj.m_outputBOverlapBuffer(idx,:,sIdx); zeros(obj.m_hopSize,obj.m_numberOfSrcs)] + ifft(outputSpectraB, obj.m_blockSize, 1) .* repmat(obj.m_window, 1, obj.m_numberOfSrcs);
+    
+                % Extract samples for the output buffers
+                outputBuffersA(:,:,sIdx) = obj.m_outputAOverlapBuffer(1:obj.m_hopSize,:,sIdx);
+                outputBuffersB(:,:,sIdx) = obj.m_outputBOverlapBuffer(1:obj.m_hopSize,:,sIdx);
+            end
         end
 
         
