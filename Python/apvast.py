@@ -3,6 +3,9 @@ import scipy as sp
 import matplotlib.pyplot as plt
 import libdetectability as ld
 
+EXPERIMENTAL_NORMALIZE_GAINS = True
+EXPERIMENTAL_REGULARIZATION = True
+
 def approx(a, b, rtol=1e-5, atol=1e-15, etol=1e-25):
     if isinstance(a, np.ndarray):
         assert a.shape == b.shape
@@ -16,7 +19,12 @@ def approx(a, b, rtol=1e-5, atol=1e-15, etol=1e-25):
 # joint diagoanlization
 def jdiag(A, B):
     # throws on non-semidefinite B
-    Bc = np.linalg.cholesky(B + 1e-10 * np.linalg.norm(B) * np.eye(B.shape[0]))
+    if EXPERIMENTAL_REGULARIZATION:
+        reg = 1e-7
+        Bc = np.linalg.cholesky(B + reg * np.eye(B.shape[0]))
+    else:
+        lmax = np.linalg.norm(B, ord=2)
+        Bc = np.linalg.cholesky(B + 1e-8 * lmax * np.eye(B.shape[0]))
     C0 = sp.linalg.solve_triangular(Bc, A, lower=True)
     C1 = sp.linalg.solve_triangular(np.conj(Bc), C0.T, lower=True).T
     [T, U] = sp.linalg.schur(C1)
@@ -62,6 +70,7 @@ class apvast:
         self.run_A = run_A
         self.run_B = run_B
 
+        # create perceptual model
         self.perceptual = perceptual
         if self.perceptual:
             np.seterr(divide='ignore')
@@ -136,8 +145,10 @@ class apvast:
         self.loudspeaker_weighted_target_response_B_to_B_buffer = np.zeros((self.statistics_buffer_length, self.number_of_mics))
 
         # init output overlap buffers
-        self.output_A_overlap_buffer = np.zeros((self.block_size, self.number_of_srcs))
-        self.output_B_overlap_buffer = np.zeros((self.block_size, self.number_of_srcs))
+        self.output_A_overlap_buffer = np.zeros((self.number_of_eigenvectors, self.block_size, self.number_of_srcs))
+        self.output_B_overlap_buffer = np.zeros((self.number_of_eigenvectors, self.block_size, self.number_of_srcs))
+        self.output_A_t_overlap_buffer = np.zeros((self.number_of_eigenvectors, self.block_size, self.number_of_srcs))
+        self.output_B_t_overlap_buffer = np.zeros((self.number_of_eigenvectors, self.block_size, self.number_of_srcs))
 
     def process_input_buffers(self, input_A, input_B):
         if input_A.size != self.hop_size or input_A.size != self.hop_size:
@@ -147,11 +158,11 @@ class apvast:
         self.update_weighted_target_signals()
         self.update_weighted_loudspeaker_response()
         self.update_statistics()
-        self.calculate_filter_spectra(self.mu, self.number_of_eigenvectors)
+        self.calculate_filter_spectra(self.mu)
         self.update_input_blocks(input_A, input_B)
-        output_buffers_A, output_buffers_B = self.compute_output_buffers()
+        output_buffer_A, output_buffer_B, output_buffer_A_t, output_buffer_B_t = self.compute_output_buffers()
 
-        return output_buffers_A, output_buffers_B
+        return output_buffer_A, output_buffer_B, output_buffer_A_t, output_buffer_B_t
 
     def update_loudspeaker_response_buffers(self, input_A, input_B):
         idx = np.array([i for i in range(self.hop_size, self.block_size)]) # NOTE: could be wrong?
@@ -306,6 +317,11 @@ class apvast:
             for i in range(self.number_of_mics):
                 self.weighting_spectra_A[:,i] = self.model.gain(np.fft.irfft(target_A_to_A_spectra[:,i]))
                 self.weighting_spectra_B[:,i] = self.model.gain(np.fft.irfft(target_B_to_B_spectra[:,i]))
+
+                # TODO: Check if this does something nice... we normalize all gains
+                if EXPERIMENTAL_NORMALIZE_GAINS:
+                    self.weighting_spectra_A[:,i] = self.weighting_spectra_A[:,i] / np.linalg.norm(self.weighting_spectra_A[:,i])
+                    self.weighting_spectra_B[:,i] = self.weighting_spectra_B[:,i] / np.linalg.norm(self.weighting_spectra_B[:,i])
         else:
             self.weighting_spectra_A = np.ones((self.block_size // 2 + 1, self.number_of_mics)) + 1.0j * np.zeros((self.block_size // 2 + 1, self.number_of_mics))
             self.weighting_spectra_B = np.ones((self.block_size // 2 + 1, self.number_of_mics)) + 1.0j * np.zeros((self.block_size // 2 + 1, self.number_of_mics))
@@ -347,43 +363,6 @@ class apvast:
                             self.loudspeaker_weighted_response_B_to_A_buffer[self.filter_length:, s, m])
                 self.R_B_to_A += Y @ Y.T
 
-        """
-        for n in range(self.statistics_buffer_length - self.filter_length):
-            idx = n + np.arange(self.filter_length) # NOTE: could be wrong
-
-            if self.run_A:
-                self.y_A_to_A = np.zeros((self.number_of_mics, self.number_of_srcs * self.filter_length, 1))
-                self.y_A_to_B = np.zeros((self.number_of_mics, self.number_of_srcs * self.filter_length, 1))
-            if self.run_B:
-                self.y_B_to_A = np.zeros((self.number_of_mics, self.number_of_srcs * self.filter_length, 1))
-                self.y_B_to_B = np.zeros((self.number_of_mics, self.number_of_srcs * self.filter_length, 1))
-
-            for m in range(self.number_of_mics):
-                if self.run_A:
-                    self.y_A_to_A[m, :, :] = np.flipud(self.loudspeaker_weighted_response_A_to_A_buffer[idx, :, m]).reshape(-1, 1, order='F')
-                    self.y_A_to_B[m, :, :] = np.flipud(self.loudspeaker_weighted_response_A_to_B_buffer[idx, :, m]).reshape(-1, 1, order='F')
-                if self.run_B:
-                    self.y_B_to_A[m, :, :] = np.flipud(self.loudspeaker_weighted_response_B_to_A_buffer[idx, :, m]).reshape(-1, 1, order='F')
-                    self.y_B_to_B[m, :, :] = np.flipud(self.loudspeaker_weighted_response_B_to_B_buffer[idx, :, m]).reshape(-1, 1, order='F')
-
-                if self.run_A:
-                    d_A = np.flipud(self.loudspeaker_weighted_target_response_A_to_A_buffer[idx, m])
-                if self.run_B:
-                    d_B = np.flipud(self.loudspeaker_weighted_target_response_B_to_B_buffer[idx, m])
-
-                if self.run_A:
-                    self.R_A_to_A = np.add(self.R_A_to_A, np.outer(self.y_A_to_A[m], self.y_A_to_A[m]))
-                    self.R_A_to_B = np.add(self.R_A_to_B, np.outer(self.y_A_to_B[m], self.y_A_to_B[m]))
-                if self.run_B:
-                    self.R_B_to_A = np.add(self.R_B_to_A, np.outer(self.y_B_to_A[m], self.y_B_to_A[m]))
-                    self.R_B_to_B = np.add(self.R_B_to_B, np.outer(self.y_B_to_B[m], self.y_B_to_B[m]))
-
-                if self.run_A:
-                    self.r_A[:,:] = np.add(self.r_A, np.multiply(self.y_A_to_A[m], d_A[0]).reshape(-1, 1))
-                if self.run_B:
-                    self.r_B[:,:] = np.add(self.r_B, np.multiply(self.y_B_to_B[m], d_B[0]).reshape(-1, 1))
-        """
-
     def reset_statistics(self):
         if self.run_A:
             self.R_A_to_A = np.zeros((self.filter_length * self.number_of_srcs, self.filter_length * self.number_of_srcs))
@@ -396,7 +375,7 @@ class apvast:
         if self.run_B:
             self.r_B = np.zeros((self.filter_length * self.number_of_srcs, 1))
 
-    def calculate_filter_spectra(self, mu, number_of_eigenvectors):
+    def calculate_filter_spectra(self, mu):
         if self.run_A:
             self.U_A, self.lambda_A = jdiag(self.R_A_to_A, self.R_A_to_B)
         if self.run_B:
@@ -407,25 +386,40 @@ class apvast:
         if self.run_B:
             self.lambda_B = np.diag(self.lambda_B)
 
+        filter_target = np.zeros(self.filter_length * self.number_of_srcs)
+        filter_target[self.filter_length * self.reference_index_A + self.modeling_delay] = 1.0
+
         if self.run_A:
-            self.w_A = np.zeros((self.filter_length * self.number_of_srcs, 1))
+            self.w_A = np.zeros((self.number_of_eigenvectors, self.filter_length * self.number_of_srcs, 1))
+            self.filter_spectra_A = []
         else:
             self.w_A = None
         if self.run_B:
-            self.w_B = np.zeros((self.filter_length * self.number_of_srcs, 1))
+            self.w_B = np.zeros((self.number_of_eigenvectors, self.filter_length * self.number_of_srcs, 1))
+            self.filter_spectra_B = []
         else:
             self.w_B = None
 
-        for i in range(number_of_eigenvectors):
-            if self.run_A:
-                self.w_A = np.add(self.w_A, np.multiply(np.inner(self.U_A[:, i], self.r_A.squeeze(-1)) / (self.lambda_A[i] + mu), self.U_A[:, i].reshape(-1, 1)))
-            if self.run_B:
-                self.w_B = np.add(self.w_B, np.multiply(np.inner(self.U_B[:, i], self.r_B.squeeze(-1)) / (self.lambda_B[i] + mu), self.U_B[:, i].reshape(-1, 1)))
+        self.filter_spectra_A_t = []
+        self.filter_spectra_B_t = []
 
-        if self.run_A:
-            self.filter_spectra_A = np.fft.rfft(np.reshape(self.w_A, (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2)
-        if self.run_B:
-            self.filter_spectra_B = np.fft.rfft(np.reshape(self.w_B, (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2)
+        for i in range(self.number_of_eigenvectors):
+            if self.run_A:
+                if i > 0:
+                    self.w_A[i] = self.w_A[i - 1]
+                self.w_A[i] = np.add(self.w_A[i], np.multiply(np.inner(self.U_A[:, i], self.r_A.squeeze(-1)) / (self.lambda_A[i] + mu), self.U_A[:, i].reshape(-1, 1)))
+            if self.run_B:
+                if i > 0:
+                    self.w_B[i] = self.w_B[i - 1]
+                self.w_B[i] = np.add(self.w_B[i], np.multiply(np.inner(self.U_B[:, i], self.r_B.squeeze(-1)) / (self.lambda_B[i] + mu), self.U_B[:, i].reshape(-1, 1)))
+
+            if self.run_A:
+                self.filter_spectra_A.append(np.fft.rfft(np.reshape(self.w_A[i], (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2))
+            self.filter_spectra_A_t.append(np.fft.rfft(np.reshape(filter_target, (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2))
+
+            if self.run_B:
+                self.filter_spectra_B.append(np.fft.rfft(np.reshape(self.w_B[i], (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2))
+            self.filter_spectra_B_t.append(np.fft.rfft(np.reshape(filter_target, (self.filter_length, self.number_of_srcs, 1), order='F'), self.block_size, 0).squeeze(2))
 
     def update_input_blocks(self, input_A, input_B):
         self.input_A_block = np.concatenate([self.input_A_block.squeeze(1)[self.hop_size : self.block_size], input_A]).reshape(-1, 1)
@@ -436,98 +430,77 @@ class apvast:
         self.input_spectrum_A = np.fft.rfft(np.multiply(self.window.squeeze(1), self.input_A_block.squeeze(1)), axis=0).reshape(-1, 1)
         self.input_spectrum_B = np.fft.rfft(np.multiply(self.window.squeeze(1), self.input_B_block.squeeze(1)), axis=0).reshape(-1, 1)
 
-        # circular convolution with the filter spectra
         if self.run_A:
-            output_spectra_A = np.multiply(np.tile(self.input_spectrum_A, (1, self.number_of_srcs)), self.filter_spectra_A)
-        if self.run_B:
-            output_spectra_B = np.multiply(np.tile(self.input_spectrum_B, (1, self.number_of_srcs)), self.filter_spectra_B)
-
-        # update the output overlap buffers
-        idx = np.arange(self.hop_size, self.block_size)
-
-        if self.run_A:
-            self.output_A_overlap_buffer = np.concatenate([
-                        self.output_A_overlap_buffer[idx, :], 
-                        np.zeros((self.hop_size, self.number_of_srcs))
-                    ]) 
-            tmp = np.fft.irfft(output_spectra_A, self.block_size, axis=0)
-            assert np.linalg.norm(np.imag(tmp)) < 1e-8
-            tmp = np.real(tmp)
-            tmp = np.multiply(tmp, np.tile(self.window, (1, self.number_of_srcs)))
-            self.output_A_overlap_buffer += tmp 
-
-        if self.run_B:
-            self.output_B_overlap_buffer = np.concatenate([
-                        self.output_B_overlap_buffer[idx, :], 
-                        np.zeros((self.hop_size, self.number_of_srcs))
-                    ]) 
-            tmp = np.fft.irfft(output_spectra_B, self.block_size, axis=0)
-            assert np.linalg.norm(np.imag(tmp)) < 1e-8
-            tmp = np.real(tmp)
-            tmp = np.multiply(tmp, np.tile(self.window, (1, self.number_of_srcs)))
-            self.output_B_overlap_buffer += tmp 
-
-        # extract samples for the output buffers
-        if self.run_A:
-            output_buffer_A = self.output_A_overlap_buffer[:self.hop_size, :]
+            output_buffer_A = []
         else:
             output_buffer_A = None
+        output_buffer_A_t = []
+
         if self.run_B:
-            output_buffer_B = self.output_B_overlap_buffer[:self.hop_size, :]
+            output_buffer_B = []
         else:
             output_buffer_B = None
+        output_buffer_B_t = []
 
-        return output_buffer_A, output_buffer_B
+        for i in range(self.number_of_eigenvectors):
+            # circular convolution with the filter spectra
+            if self.run_A:
+                output_spectra_A = np.multiply(np.tile(self.input_spectrum_A, (1, self.number_of_srcs)), self.filter_spectra_A[i])
+            output_spectra_A_t = np.multiply(np.tile(self.input_spectrum_A, (1, self.number_of_srcs)), self.filter_spectra_A_t[i])
+            if self.run_B:
+                output_spectra_B = np.multiply(np.tile(self.input_spectrum_B, (1, self.number_of_srcs)), self.filter_spectra_B[i])
+            output_spectra_B_t = np.multiply(np.tile(self.input_spectrum_B, (1, self.number_of_srcs)), self.filter_spectra_B_t[i])
 
-if __name__ == "__main__":
-    test = sp.io.loadmat("test.mat")
-    sign = sp.io.loadmat("signals.mat")
+            # update the output overlap buffers
+            idx = np.arange(self.hop_size, self.block_size)
+            if self.run_A:
+                self.output_A_overlap_buffer[i,:,:] = np.concatenate([
+                            self.output_A_overlap_buffer[i, idx, :], 
+                            np.zeros((self.hop_size, self.number_of_srcs))
+                        ]) 
+                tmp = np.fft.irfft(output_spectra_A, self.block_size, axis=0)
+                assert np.linalg.norm(np.imag(tmp)) < 1e-8
+                tmp = np.real(tmp)
+                tmp = np.multiply(tmp, np.tile(self.window, (1, self.number_of_srcs)))
+                self.output_A_overlap_buffer[i,:,:] += tmp 
 
-    print(f"Creating AP-VAST object...")
-    block_size = test["blockSize"][0][0]
-    hop_size = test["hopSize"][0][0]
-    ap = apvast(
-        block_size=test["blockSize"][0][0],
-        rir_A=test["rirA"],
-        rir_B=test["rirB"],
-        filter_length=test["filterLength"][0][0],
-        modeling_delay=test["modelingDelay"][0][0],
-        reference_index_A=test["referenceIndexA"][0][0] - 1, # python vs matlab indexing, it is what it is
-        reference_index_B=test["referenceIndexB"][0][0] - 1, # python vs matlab indexing, it is what it is
-        number_of_eigenvectors=test["numberOfEigenVectors"][0][0],
-        mu=test["mu"][0][0],
-        statistics_buffer_length=test["statisticsBufferLength"][0][0],
-        hop_size=test["hopSize"][0][0],
-        sampling_rate=1200,
-        perceptual=False,
-    )
-    print(f"Creating AP-VAST object OK")
+            self.output_A_t_overlap_buffer[i,:,:] = np.concatenate([
+                        self.output_A_t_overlap_buffer[i, idx, :], 
+                        np.zeros((self.hop_size, self.number_of_srcs))
+                    ]) 
+            tmp = np.fft.irfft(output_spectra_A_t, self.block_size, axis=0)
+            assert np.linalg.norm(np.imag(tmp)) < 1e-8
+            tmp = np.real(tmp)
+            tmp = np.multiply(tmp, np.tile(self.window, (1, self.number_of_srcs)))
+            self.output_A_t_overlap_buffer[i,:,:] += tmp 
 
-    print(f"Running...")
-    iAb = test["iAb"]
-    iBb = test["iBb"]
-    oAb = np.zeros_like(test["oAb"])
-    oBb = np.zeros_like(test["oAb"])
+            if self.run_B:
+                self.output_B_overlap_buffer[i,:,:] = np.concatenate([
+                            self.output_B_overlap_buffer[i, idx, :], 
+                            np.zeros((self.hop_size, self.number_of_srcs))
+                        ]) 
+                tmp = np.fft.irfft(output_spectra_B, self.block_size, axis=0)
+                assert np.linalg.norm(np.imag(tmp)) < 1e-8
+                tmp = np.real(tmp)
+                tmp = np.multiply(tmp, np.tile(self.window, (1, self.number_of_srcs)))
+                self.output_B_overlap_buffer[i,:,:] += tmp 
 
-    for i in range(iAb.shape[0]):
-        print(f"{i}/{iAb.shape[0] - 1}")
-        print(iAb[i,:].shape)
-        oAb[i,:], oBb[i,:,:] = ap.process_input_buffers(iAb[i,:], iBb[i,:])
-        print(f'got w_A, first 5 samples first source:\n{ap.w_A[0:5,0]}')
-        print(f'ref w_A, first 5 samples first source:\n{test["wAb"][i,0:5]}')
-        print(f'got w_B, first 5 samples first source:\n{ap.w_B[0:5,0]}')
-        print(f'ref w_B, first 5 samples first source:\n{test["wBb"][i,0:5]}')
-    print(f"Running OK")
+            self.output_B_t_overlap_buffer[i,:,:] = np.concatenate([
+                        self.output_B_t_overlap_buffer[i, idx, :], 
+                        np.zeros((self.hop_size, self.number_of_srcs))
+                    ]) 
+            tmp = np.fft.irfft(output_spectra_B_t, self.block_size, axis=0)
+            assert np.linalg.norm(np.imag(tmp)) < 1e-8
+            tmp = np.real(tmp)
+            tmp = np.multiply(tmp, np.tile(self.window, (1, self.number_of_srcs)))
+            self.output_B_t_overlap_buffer[i,:,:] += tmp 
 
-    sp.io.savemat("output.mat", {
-        'iAb_MATLAB': test["iAb"],
-        'iBb_MATLAB': test["iBb"],
-        'oAb_MATLAB': test["oAb"],
-        'oBb_MATLAB': test["oBb"],
-        'rirA': test["rirA"],
-        'rirB': test["rirB"],
-        'iAb': iAb,
-        'iBb': iBb,
-        'oAb': oAb,
-        'oBb': oBb,
-    })
+            # extract samples for the output buffers
+            if self.run_A:
+                output_buffer_A.append(self.output_A_overlap_buffer[i, :self.hop_size, :])
+            output_buffer_A_t.append(self.output_A_t_overlap_buffer[i, :self.hop_size, :])
+            if self.run_B:
+                output_buffer_B.append(self.output_B_overlap_buffer[i, :self.hop_size, :])
+            output_buffer_B_t.append(self.output_B_t_overlap_buffer[i, :self.hop_size, :])
+
+        return output_buffer_A, output_buffer_B, output_buffer_A_t, output_buffer_B_t
