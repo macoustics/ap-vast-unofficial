@@ -133,6 +133,7 @@ classdef perceptualModel < handle
             end
             spectrum = repmat(abs(blockSpectrum(1:obj.blockSize/2+1)), 1, obj.numberOfChannels);
             maskerPower = sum( (obj.channelFrequencyMagnitudeResponse.*spectrum).^2, 1);
+%             keyboard
             obj.squaredWeightingCurve = obj.Cs*obj.Leff* sum( obj.channelFrequencyMagnitudeResponse.^2 ...
                 ./( repmat(maskerPower,obj.blockSize/2+1,1) + obj.Ca ), 2 );
         end
@@ -186,6 +187,37 @@ classdef perceptualModel < handle
             tmpCurve = sqrt(tmpCurve);
             tmpCurve = tmpCurve/norm(tmpCurve);
             weightingCurve = tmpCurve;
+        end
+
+        function detectability = evaluateDetectability(obj, testSignal, plotFlag)
+            arguments (Input)
+                obj (1,1) perceptualModel
+                testSignal (:,1) double
+                plotFlag (1,1) logical
+            end
+            arguments (Output)
+                detectability (1,1) double
+            end
+            if length(testSignal) ~= obj.blockSize
+                error('The size of the testSignal does not match the expected blockSize');
+            end
+            tmpSpectrum = sqrt(2)/obj.blockSize*fft(testSignal);
+            testSquaredSpectrum = abs(tmpSpectrum(1:obj.blockSize/2+1)).^2;
+            detectability = sum(obj.squaredWeightingCurve(2:end) .* testSquaredSpectrum(2:end));
+            
+            if plotFlag
+                figure
+                frequencies = 0:48e3/obj.blockSize:48e3-48e3/obj.blockSize;
+                frequencies = frequencies(1:obj.blockSize/2+1);
+                semilogx(frequencies, 10*log10(1./obj.squaredWeightingCurve / ((20e-6)^2)), 'o');
+                hold on; grid on
+                semilogx(frequencies, 10*log10(testSquaredSpectrum / ((20e-6)^2)), 'x')
+                xlabel('Frequency [Hz]')
+                ylabel('Sound pressure level [dB SPL]')
+                legend('Masking curve','testSpectrum')
+                xlim([20 20e3]); ylim([0 100])
+                title(sprintf('Detectability = %.2e', detectability))
+            end
         end
     end
 end
